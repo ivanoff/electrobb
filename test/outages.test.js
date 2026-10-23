@@ -29,9 +29,23 @@ test('planned push excludes forbidden causes and checks account', () => {
   assert.equal(parseOutages(push('Заходи обмеження'), { account: '123456789', source: 'push' }).events[0].kind, 'planned');
   assert.equal(parseOutages(push('Заходи обмеження'), { account: '987654321', source: 'push' }).events.length, 0);
 });
-test('unknown GПВ is reported but never used as an outage', () => {
-  assert.equal(classify('Графік погодинних відключень (ГПВ)'), 'unknown');
-  const parsed = parseOutages(block('Графік погодинних відключень (ГПВ)', '10:00','12:00'));
+test('hourly schedules are planned outages with or without abbreviation', () => {
+  for (const reason of ['Графік погодинних відключень (ГПВ)', 'Графік погодинних відключень', '  ГРАФІК  ПОГОДИННИХ ВІДКЛЮЧЕНЬ (ГПВ). ']) {
+    assert.equal(classify(reason), 'planned');
+    const parsed = parseOutages(block(reason, '10:00','12:00'));
+    assert.equal(parsed.unknown.length, 0);
+    assert.equal(parsed.errors.length, 0);
+    assert.deepEqual(parsed.events.map(({ kind, start, end }) => ({ kind, start, end })), [
+      { kind: 'planned', start: at('10:00'), end: at('12:00') }
+    ]);
+    const result = plan(snapshot(parsed.events), '09:00');
+    assert.equal(result.notifications.length, 1);
+    assert.match(result.notifications[0].text, /Планове відключення електроенергії.*10:00 до 12:00/);
+  }
+});
+test('unknown types are reported but never used as an outage', () => {
+  assert.equal(classify('Невідомий вид відключень'), 'unknown');
+  const parsed = parseOutages(block('Невідомий вид відключень', '10:00','12:00'));
   assert.equal(parsed.events.length, 0); assert.equal(parsed.unknown.length, 1);
 });
 test('touching and overlapping intervals merge transitively', () => {
@@ -75,8 +89,8 @@ test('quiet hours hold unknown warnings and morning catches up upcoming + ongoin
   assert.equal(plan(state,'09:01').notifications.length,0);
   assert.equal(plan(state,'22:00').notifications.length,0);
 });
-test('future days and ended intervals are not sent', () => {
-  const state=snapshot([event('06:00','08:00'),{...event('10:00','12:00'),start:parseDate('24-10-2026 10:00'),end:parseDate('24-10-2026 12:00')}]);
+test('days beyond tomorrow and ended intervals are not sent', () => {
+  const state=snapshot([event('06:00','08:00'),{...event('10:00','12:00'),start:parseDate('25-10-2026 10:00'),end:parseDate('25-10-2026 12:00')}]);
   assert.equal(plan(state,'09:00').notifications.length,0);
 });
 test('regular and end checks share one decision; crash/restart retains rate limit', () => {

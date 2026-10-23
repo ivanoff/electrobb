@@ -10,7 +10,7 @@ export function classify(reason) {
   const text = normalize(reason);
   if (text.startsWith('виконання оперативних перемикань') ||
       text.startsWith('виконання ремонтних робіт на обладнанні підстанції')) return 'ignored';
-  if (text === 'заходи обмеження') return 'planned';
+  if (text === 'заходи обмеження' || /^графік погодинних відключень(?:\s*\(гпв\))?$/.test(text)) return 'planned';
   if (/^графіки аварійних відключень(?:\s*\(гав\))?$/.test(text)) return 'emergency';
   return 'unknown';
 }

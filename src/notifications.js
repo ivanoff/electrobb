@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { MINUTE, dayKey, quietTime, todayIntervals, describe, timeLabel, normalize, mergeIntervals, effectiveEvents, upcomingQuietIntervals } from './outages.js';
+import { MINUTE, local, dayKey, quietTime, todayIntervals, describe, timeLabel, normalize, mergeIntervals, effectiveEvents, upcomingQuietIntervals } from './outages.js';
 export const regularInterval = 120 * MINUTE;
 export const minQueryInterval = 15 * MINUTE;
 export const historyInterval = 10 * MINUTE;
@@ -84,6 +84,20 @@ export function planNotifications(state, now, config) {
         { announced: [record(interval)] });
     }
   }
+  // First announcements cover both calendar days; reminders remain today's only.
+  const tomorrowStart = local(now).plus({ days: 1 }).startOf('day').toMillis();
+  const tomorrowEnd = local(now).plus({ days: 2 }).startOf('day').toMillis();
+  const tomorrowIntervals = mergeIntervals(effectiveEvents(state))
+    .filter(i => i.start >= tomorrowStart && i.start < tomorrowEnd);
+  for (const interval of tomorrowIntervals) {
+    const previous = working.announced[intervalKey(day, interval)];
+    if (!previous || previous.end !== interval.end || previous.kinds.join() !== interval.kinds.join()) {
+      const change = previous && previous.end !== interval.end
+        ? `Час завершення відключення змінено: ${timeLabel(previous.end, now)} → ${timeLabel(interval.end, now)}.\n` : '';
+      add(previous ? 'interval_changed' : 'new_interval', `${change}${describe(interval, now)}`,
+        { announced: [record(interval)] });
+    }
+  }
   for (const interval of mergeIntervals(effectiveEvents(state))) {
     const previous = working.announced[intervalKey(day, interval)];
     if (previous && previous.end > now && interval.end <= now && previous.end !== interval.end) {
@@ -93,7 +107,7 @@ export function planNotifications(state, now, config) {
   for (const [type, info] of Object.entries(state.unknown)) {
     if (!working.unknownSent[type]) add('unknown_type', `Невідомий тип відключення: «${info.reason.slice(0, 500)}». Потрібне уточнення правил; цей тип не враховано в розкладі.`, { unknown: [type] });
   }
-  if (!notifications.length) decisions.push({ reason: intervals.length || quietIntervals.length ? 'no_new_or_due_notifications' : 'no_remaining_outages_today' });
+  if (!notifications.length) decisions.push({ reason: intervals.length || quietIntervals.length || tomorrowIntervals.length ? 'no_new_or_due_notifications' : 'no_remaining_outages_today' });
   return { notifications, decisions, intervals, quietIntervals };
 }
 export function ingestParsed(state, parsed, log) {
