@@ -1,0 +1,23 @@
+{
+  "name": "electrobb",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "./run.sh",
+    "login": "./run.sh --login",
+    "inspect": "./run.sh --inspect",
+    "once": "./run.sh --once",
+    "test": "bun test",
+    "login:qr": "./run.sh --login --qr",
+    "preview": "./run.sh --preview"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "dependencies": {
+    "@mtproto/core": "^6.3.0",
+    "luxon": "^3.7.2",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
