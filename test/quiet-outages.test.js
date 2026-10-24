@@ -11,7 +11,7 @@ test('tomorrow early outage is announced before quiet hours, without a new bot q
   const state=stateWith([interval('06:00','08:00')]);state.lastQueryAttempt=at('19:00');
   const result=plan(state);
   assert.equal(result.notifications.length,1);assert.equal(result.notifications[0].type,'upcoming_quiet_outage');
-  assert.match(result.notifications[0].text,/24\.10 06:00 до 24\.10 08:00/);
+  assert.match(result.notifications[0].text,/завтра \(24\.10\) з 06:00 до 08:00/);
   assert.equal(queryDecision(state,at('20:00'),config).due,false);
 });
 test('night warning persists across restart, but changed end is announced',()=>{
@@ -31,7 +31,7 @@ test('tomorrow at quiet-end is announced but later days wait',()=>{
   const state=stateWith([interval('09:00','10:00'),interval('06:00','08:00','25')]);
   const result=plan(state);
   assert.equal(result.notifications.length,1);
-  assert.match(result.notifications[0].text,/24\.10 09:00/);
+  assert.match(result.notifications[0].text,/завтра \(24\.10\) з 09:00/);
 });
 test('partial overlap with quiet hours is enough',()=>{
   const state=stateWith([interval('08:30','10:00')]);
@@ -41,7 +41,7 @@ test('overlapping tomorrow intervals and pushes produce one mixed warning',()=>{
   const state=stateWith([interval('06:00','08:00')]);
   state.pushes.x=interval('05:00','07:00','24','emergency');
   const result=plan(state);assert.equal(result.notifications.length,1);
-  assert.match(result.notifications[0].text,/05:00 до 24\.10 08:00/);
+  assert.match(result.notifications[0].text,/05:00 до 08:00/);
   assert.match(result.notifications[0].text,/планове та аварійне/);
 });
 test('morning skips completed night outage but summarizes ongoing one',()=>{
@@ -65,7 +65,7 @@ for (const kind of ['planned', 'emergency']) {
     let state = stateWith([interval('18:00', '20:00', '24', kind)]);
     const first = plan(state, '09:00');
     assert.equal(first.notifications.length, 1);
-    assert.match(first.notifications[0].text, /24\.10 18:00 до 24\.10 20:00/);
+    assert.match(first.notifications[0].text, /завтра \(24\.10\) з 18:00 до 20:00/);
     applyDelivery(state, first.notifications[0].patch, at('09:00'));
     state = JSON.parse(JSON.stringify(state));
     assert.equal(plan(state, '12:00').notifications.length, 0);
@@ -80,7 +80,7 @@ test('stored distant event is announced at quiet end on the preceding calendar d
   assert.equal(plan(state, '08:59', '25').notifications.length, 0);
   const morning = plan(state, '09:00', '25');
   assert.equal(morning.notifications.length, 1);
-  assert.match(morning.notifications[0].text, /26\.10 18:00/);
+  assert.match(morning.notifications[0].text, /завтра \(26\.10\) з 18:00/);
   applyDelivery(state, morning.notifications[0].patch, at('09:00', '25'));
   assert.equal(plan(state, '09:10', '25').notifications.length, 0);
 });
@@ -88,4 +88,22 @@ test('tomorrow information received during quiet hours waits until quiet end', (
   const state = stateWith([interval('18:00', '20:00')]);
   assert.equal(plan(state, '08:59').notifications.length, 0);
   assert.equal(plan(state, '09:00').notifications.length, 1);
+});
+
+test('outage announcements place the date once and distinguish midnight from overnight endings', () => {
+  const cases = [
+    ['23', '24', '12:00', '24', '15:30', 'завтра (24.10) з 12:00 до 15:30'],
+    ['23', '24', '22:00', '25', '00:00', 'завтра (24.10) з 22:00 до 00:00'],
+    ['24', '24', '22:00', '25', '00:00', 'з 22:00 до 00:00'],
+    ['24', '24', '22:00', '25', '04:00', 'з 22:00 до 04:00 (25.10)'],
+    ['23', '24', '22:00', '25', '04:00', 'завтра (24.10) з 22:00 до 04:00 (25.10)'],
+    ['25', '26', '12:00', '26', '15:30', 'завтра (26.10) з 12:00 до 15:30'],
+  ];
+  for (const [today, startDay, start, endDay, end, expected] of cases) {
+    const state = stateWith([{ start: at(start, startDay), end: at(end, endDay), kind: 'planned' }]);
+    state.morningDay = `2026-10-${today}`;
+    const result = plan(state, '09:00', today);
+    assert.equal(result.notifications.length, 1);
+    assert.equal(result.notifications[0].text, `Планове відключення електроенергії: ${expected}.`);
+  }
 });

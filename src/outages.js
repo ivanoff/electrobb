@@ -113,5 +113,12 @@ export function describe(interval, now) {
   const mixed = interval.kinds.length === 2 ? ' (планове та аварійне)' : '';
   const minutes = Math.ceil((interval.start - now) / MINUTE);
   const relative = minutes <= 0 ? ' триває' : minutes === 60 ? ' через 1 годину' : minutes < 60 ? ` через ${minutes} хв` : '';
-  return `${kind}${relative}: з ${timeLabel(interval.start, now)} до ${timeLabel(interval.end, now)}${mixed}.`;
+  const start = local(interval.start), end = local(interval.end);
+  const startDate = start.toISODate() === dayKey(now) ? ''
+    : start.toISODate() === local(now).plus({ days: 1 }).toISODate()
+      ? `завтра (${start.toFormat('dd.MM')}) ` : `${start.toFormat('dd.MM')} `;
+  const endTime = end.toFormat('HH:mm');
+  const endDate = end.toISODate() !== start.toISODate() && endTime !== '00:00'
+    ? ` (${end.toFormat('dd.MM')})` : '';
+  return `${kind}${relative}: ${startDate}з ${start.toFormat('HH:mm')} до ${endTime}${endDate}${mixed}.`;
 }
