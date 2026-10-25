@@ -1,0 +1,30 @@
+services:
+  electrobb:
+    build: .
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    init: true
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./src
+        target: /app/src
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.env
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./logs
+        target: /app/logs
+      - type: bind
+        source: ./cache
+        target: /app/cache
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -106,6 +106,50 @@ bun run login:qr
 
 Інший варіант — `bun run login`: код надходить способом, вибраним Telegram. `/resend` доступний лише за наявності запропонованого Telegram запасного способу й після завершення його таймера.
 
+## Запуск через Docker Compose
+
+Потрібні Docker і Docker Compose v2. Створіть і заповніть `.env`, як описано вище.
+Підготуйте каталоги від імені поточного користувача та задайте його UID/GID:
+
+```bash
+mkdir -p logs cache
+chmod 700 logs cache
+export LOCAL_UID=$(id -u) LOCAL_GID=$(id -g)
+docker compose build
+```
+
+За замовчуванням контейнер використовує UID/GID `1000:1000`. Якщо вони інші,
+експортуйте `LOCAL_UID` і `LOCAL_GID` перед командами Compose або додайте їх у `.env`.
+Перед переходом із systemd зупиніть його автозапуск: `systemctl --user disable --now electrobb`.
+
+Якщо в `cache` ще немає авторизованої Telegram-сесії, виконайте вхід:
+
+```bash
+docker compose run --rm electrobb --login --qr
+```
+
+Запуск і керування:
+
+```bash
+docker compose up -d
+docker compose logs -f --tail=100
+docker compose restart electrobb   # після зміни src або .env
+docker compose down
+```
+
+`src/` і `.env` підключені як bind volumes лише для читання; `logs/` і `cache/` —
+для запису. Сесія, стан і журнали залишаються на хості після видалення контейнера.
+`.env` читає Bun безпосередньо з файлу. Залежності встановлюються в образ;
+після зміни `package.json`, `bun.lock` або `run.sh` виконайте `docker compose up -d --build`.
+
+Для ручних команд спочатку зупиніть контейнер, щоб звільнити спільне блокування:
+
+```bash
+docker compose stop
+docker compose run --rm electrobb --preview
+docker compose up -d
+```
+
 ## Запуск і керування
 
 У поточному встановленні сервіс називається `electrobb.service`.
