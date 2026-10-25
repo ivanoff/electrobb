@@ -150,6 +150,82 @@ docker compose run --rm electrobb --preview
 docker compose up -d
 ```
 
+## Запуск у Kubernetes
+
+Маніфести — у `deploy/k8s/`: PVC для сесії, стану й журналів, Deployment
+з однією реплікою та окремий Pod для входу. Service та Ingress не потрібні:
+сервіс лише встановлює вихідні з’єднання з Telegram. Кластер має дозволяти
+вихідний трафік і DNS та мати стандартний StorageClass з підтримкою `fsGroup`.
+За потреби задайте `storageClassName` і розмір PVC у `storage.yaml`.
+
+Образ тепер містить `src/`; Compose і надалі використовує локальний bind mount.
+Зберіть образ і завантажте його у свій registry:
+
+```bash
+docker build -t YOUR_REGISTRY/electrobb:YOUR_TAG .
+docker push YOUR_REGISTRY/electrobb:YOUR_TAG
+```
+
+Замініть **обидва** значення `image: electrobb:local` у кожному з файлів
+`deployment.yaml` та `login.yaml` на цей образ. Для приватного registry додайте
+`imagePullSecrets` до Pod spec. Для локального кластера можна залишити
+`electrobb:local`, попередньо завантаживши образ на його вузли.
+
+Створіть namespace і Secret із заповненого `.env`. Файл монтується безпосередньо,
+щоб зберегти правила dotenv, зокрема лапки навколо `BOT_COMMAND`:
+
+```bash
+kubectl create namespace electrobb
+kubectl -n electrobb create secret generic electrobb-env --from-file=.env=.env
+kubectl -n electrobb apply -f deploy/k8s/storage.yaml
+```
+
+Перед переходом зупиніть попередній екземпляр у Compose або systemd.
+Для першого входу створіть інтерактивний Pod і підключіться до нього:
+
+```bash
+kubectl -n electrobb apply -f deploy/k8s/login.yaml
+kubectl -n electrobb wait --for=condition=Ready pod/electrobb-login --timeout=180s
+kubectl -n electrobb attach -it electrobb-login -c electrobb
+```
+
+Відскануйте QR-код у Telegram; якщо він уже прокрутився, перегляньте
+`kubectl -n electrobb logs electrobb-login -c electrobb`. За потреби введіть 2FA.
+Після повідомлення «Вход выполнен.» видаліть Pod та запустіть сервіс:
+
+```bash
+kubectl -n electrobb delete pod electrobb-login --wait=true
+kubectl -n electrobb apply -f deploy/k8s/deployment.yaml
+kubectl -n electrobb rollout status deployment/electrobb --timeout=180s
+kubectl -n electrobb logs -f deployment/electrobb --tail=100
+```
+
+Не застосовуйте всю директорію через `apply -f deploy/k8s/`: Pod входу запускається
+окремо, коли сервіс зупинений. Для повторного входу спочатку виконайте
+`kubectl -n electrobb scale deployment/electrobb --replicas=0` і дочекайтеся
+видалення робочого Pod (`kubectl -n electrobb wait --for=delete pod -l app=electrobb --timeout=180s`).
+Потім повторіть процедуру входу й застосуйте `deployment.yaml`.
+
+Стратегія `Recreate` зупиняє старий Pod перед оновленням. Залишайте одну репліку:
+спільна Telegram-сесія й стан не призначені для паралельних процесів.
+PVC зберігається після видалення Deployment; не видаляйте його для звичайного
+перезапуску. Новий PVC не містить локального `cache/state.json`, тому історія
+надісланих нагадувань починається заново. Для міграції зі збереженням історії
+перенесіть вміст локального `cache/` у каталог `cache/` PVC, поки обидва екземпляри
+зупинені, з власником `1000:1000`.
+
+Після зміни `.env` оновіть Secret і перезапустіть Pod (монтування `subPath`
+не оновлюється автоматично):
+
+```bash
+kubectl -n electrobb create secret generic electrobb-env --from-file=.env=.env --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n electrobb rollout restart deployment/electrobb
+```
+
+Після зміни коду зберіть образ із новим тегом, оновіть `image` в маніфестах
+і застосуйте Deployment. HTTP probes не задані: застосунок не має health endpoint;
+статус Ready означає запуск контейнера, а роботу монітора перевіряйте за журналами.
+
 ## Запуск і керування
 
 У поточному встановленні сервіс називається `electrobb.service`.

@@ -9,6 +9,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 COPY --chmod=755 run.sh ./run.sh
+COPY src ./src
 
 USER bun
 ENTRYPOINT ["./run.sh"]
