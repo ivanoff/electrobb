@@ -18,6 +18,7 @@ export function dailyReport(state, date) {
   const intervals = state.outages.map(i => ({ start: Math.max(start, i.start), end: Math.min(end, i.end ?? state.observedUntil) }))
     .filter(i => i.end > i.start);
   const seconds = Math.floor(intervals.reduce((sum, i) => sum + i.end - i.start, 0) / 1000);
+  if (seconds === 24 * 60 * 60) return [];
   const duration = `${Math.floor(seconds / 3600)} год ${Math.floor(seconds % 3600 / 60)} хв ${seconds % 60} с`;
   const lines = intervals.map(i => `${local(i.start).toFormat('HH:mm:ss')}–${i.end === end ? '24:00:00' : local(i.end).toFormat('HH:mm:ss')}`);
   // Split long lists to stay within Telegram's message limit.
@@ -44,7 +45,7 @@ export class HeartbeatMonitor {
   enqueue(text) { this.state.outbox.push({ text, randomId: randomBytes(8).readBigInt64LE().toString() }); }
   check(now) {
     if (!this.ready) return;
-    if (this.online && now - this.lastHeartbeat >= 2 * MINUTE) {
+    if (this.online && now - this.lastHeartbeat >= 5 * MINUTE) {
       this.online = false;
       const start = this.lastHeartbeat + MINUTE;
       this.state.outages.push({ start, end: null });
@@ -129,5 +130,5 @@ export async function startHeartbeat({ port, token, path, send, config, log }) {
     catch (error) { log('heartbeat_tick_failed', { error: error.message }); }
   }, 1000);
   log('heartbeat_started', { port });
-  return server;
+  return { server, monitor };
 }

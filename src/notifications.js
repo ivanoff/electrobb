@@ -15,14 +15,16 @@ export function applyDelivery(state, patch, now) {
   for (const type of patch.unknown || []) state.unknownSent[type] = now;
   if (patch.morningDay) state.morningDay = patch.morningDay;
 }
-export function queryDecision(state, now, config, startup = false) {
+export function queryDecision(state, now, config, startup = false, powerOff = false) {
   const intervals = todayIntervals(state, now);
   const confirm = !quietTime(now, config) && intervals.some(i => now >= i.end - 15 * MINUTE &&
     !state.sent[endKey(dayKey(now), i)] && (state.lastQuerySuccess || 0) < i.end - 15 * MINUTE);
   const regular = !state.lastQueryAttempt || now - state.lastQueryAttempt >= regularInterval;
   const afterEnd = mergeIntervals(effectiveEvents(state)).some(i =>
     now >= i.end + 5 * MINUTE && (state.lastQueryAttempt || 0) < i.end + 5 * MINUTE);
-  const reasons = [startup && 'startup', regular && 'regular_1h', confirm && 'confirm_end_15m',
+  const unexpectedOutage = powerOff && state.snapshot.at > 0 &&
+    !effectiveEvents(state).some(i => i.start <= now && now < i.end);
+  const reasons = [unexpectedOutage && 'unexpected_outage_15m', startup && 'startup', regular && 'regular_1h', confirm && 'confirm_end_15m',
     afterEnd && 'after_end_5m'].filter(Boolean);
   const allowedAt = Math.max((state.lastQueryAttempt || 0) + minQueryInterval, state.blockedUntil || 0);
   return { due: reasons.length > 0 && now >= allowedAt, reasons, allowedAt };

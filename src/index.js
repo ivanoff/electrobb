@@ -175,9 +175,10 @@ async function main() {
     },
   });
   if (heartbeat && !process.argv.includes('--once')) {
-    await startHeartbeat({ ...heartbeat, path: resolve(root, 'cache/heartbeat.json'), config, log,
+    const receiver = await startHeartbeat({ ...heartbeat, path: resolve(root, 'cache/heartbeat.json'), config, log,
       send: (message, random_id, { silent }) => call('messages.sendMessage', { peer: destination, message, random_id, silent }),
     });
+    monitor.powerOff = () => receiver.monitor.ready && !receiver.monitor.online;
   }
   log('monitor_started', { config, queryMinutes: 60, historyMinutes: 10, minimumQueryMinutes: 15, destinationId: destination.channel_id || destination.chat_id });
   do {

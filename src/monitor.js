@@ -3,8 +3,8 @@ import { parseOutages, eventKey, dayKey, local, quietTime, silentTime, MINUTE } 
 import { newState, ingestParsed, queryDecision, planNotifications, applyDelivery, historyInterval, regularInterval } from './notifications.js';
 
 export class Monitor {
-  constructor({ state, save, log, transport, config, account, now = Date.now }) {
-    Object.assign(this, { state, save, log, transport, config, account, now });
+  constructor({ state, save, log, transport, config, account, now = Date.now, powerOff = () => false }) {
+    Object.assign(this, { state, save, log, transport, config, account, now, powerOff });
     this.startupPending = true;
   }
   async persist() { await this.save(this.state); }
@@ -72,7 +72,7 @@ export class Monitor {
       } catch (error) { await this.failure(error, 'history_poll'); }
     }
     if ((this.state.blockedUntil || 0) > this.now()) return;
-    const query = queryDecision(this.state, this.now(), this.config, this.startupPending);
+    const query = queryDecision(this.state, this.now(), this.config, this.startupPending, this.powerOff());
     if (query.due) {
       this.state.lastQueryAttempt = this.now();
       await this.persist(); // Commit rate limit before the first network request, even if we crash.

@@ -117,3 +117,35 @@ test('after restoration check waits for rate limit and failed attempt is not rep
   h.setTime('14:30');await h.monitor.tick();
   assert.equal(h.logs.filter(l=>l.event==='query_started').length,1);
 });
+
+test('confirmed unexpected outage polls every 15 minutes and stops on power restoration', async () => {
+  const h = harness('10:00');
+  await h.monitor.tick();
+  h.monitor.powerOff = () => true;
+  h.setTime('10:14'); await h.monitor.tick(); assert.equal(h.queries.length, 1);
+  h.setTime('10:15'); await h.monitor.tick(); assert.equal(h.queries.length, 2);
+  h.setTime('10:29'); await h.monitor.tick(); assert.equal(h.queries.length, 2);
+  h.setTime('10:30'); await h.monitor.tick(); assert.equal(h.queries.length, 3);
+  h.monitor.powerOff = () => false;
+  h.setTime('10:45'); await h.monitor.tick(); assert.equal(h.queries.length, 3);
+});
+
+test('scheduled outage stops extra polling, including when added by a push', async () => {
+  const h = harness('10:00'); await h.monitor.tick();
+  h.monitor.powerOff = () => true;
+  h.state.pushes.current = { kind: 'planned', start: at('10:01'), end: at('12:00'), observedAt: at('10:01') };
+  h.setTime('10:15'); await h.monitor.tick();
+  assert.equal(h.queries.length, 1);
+});
+
+test('unexpected outage queries during quiet hours; failures still wait 15 minutes', async () => {
+  const h = harness('06:00'); await h.monitor.tick();
+  h.monitor.powerOff = () => true;
+  h.setTime('06:15'); await h.monitor.tick(); assert.equal(h.queries.length, 2);
+  assert.equal(h.sent.length, 0);
+  let attempts = 0;
+  h.monitor.transport.query = async () => { attempts++; throw new Error('offline'); };
+  h.setTime('06:30'); await h.monitor.tick(); assert.equal(attempts, 1);
+  h.setTime('06:31'); await h.monitor.tick(); assert.equal(attempts, 1);
+  h.setTime('06:45'); await h.monitor.tick(); assert.equal(attempts, 2);
+});
