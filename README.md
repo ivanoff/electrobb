@@ -158,103 +158,41 @@ docker compose up -d
 
 ## Запуск у Kubernetes
 
-Маніфести — у `deploy/k8s/`: PVC для сесії, стану й журналів, Deployment
-з однією реплікою та окремий Pod для входу. Service та Ingress не потрібні:
-сервіс лише встановлює вихідні з’єднання з Telegram. Кластер має дозволяти
-вихідний трафік і DNS та мати стандартний StorageClass з підтримкою `fsGroup`.
-За потреби задайте `storageClassName` і розмір PVC у `storage.yaml`.
+Єдиний набір маніфестів зберігається в `~/work/server/electrobb/k8s`.
+Інструкції першого запуску, входу в Telegram, налаштування Secret та HTTPS —
+у `~/work/server/electrobb/README.md`. У цьому репозиторії копії маніфестів немає.
 
-Образ тепер містить `src/`; Compose і надалі використовує локальний bind mount.
-Зберіть образ і завантажте його в registry:
+Зібрати й опублікувати образ із каталогу застосунку:
 
 ```bash
-docker build -t docker.virt.biz/electrobb:latest .
-docker push docker.virt.biz/electrobb:latest
+./build.sh
 ```
 
-У `deployment.yaml` та `login.yaml` основний та init-контейнер використовують
-`docker.virt.biz/electrobb:latest` з `imagePullPolicy: Always`. При кожному запуску
-Pod Kubernetes перевіряє актуальний образ у registry; незмінені шари можуть
-використовуватися з кешу. Обидва Pod spec містять `imagePullSecrets` із назвою
-`electrobb-registry`. Після створення namespace авторизуйте Docker та створіть
-секрет для завантаження образу (потрібен Python 3):
+Застосувати серверні маніфести:
 
 ```bash
-docker login docker.virt.biz
-./deploy/registry-secret.sh
+cd ~/work/server/electrobb
+./k8s/apply.sh
 ```
 
-Скрипт переносить лише облікові дані `docker.virt.biz` із локальної конфігурації
-Docker, підтримує credential helpers і не виводить пароль.
-
-Створіть namespace і Secret із заповненого `.env`. Файл монтується безпосередньо,
-щоб зберегти правила dotenv, зокрема лапки навколо `BOT_COMMAND`:
+Deployment та Pod входу використовують `docker.virt.biz/electrobb:latest`
+з `imagePullPolicy: Always`, namespace `electrobb` і registry Secret `docker-virt-biz`.
+Після публікації нового `latest`, якщо Pod spec не змінювався, перезапустіть Pod:
 
 ```bash
-kubectl create namespace electrobb
-kubectl -n electrobb create secret generic electrobb-env --from-file=.env=.env
-kubectl -n electrobb apply -f deploy/k8s/storage.yaml
-```
-
-Перед переходом зупиніть попередній екземпляр у Compose або systemd.
-Для першого входу створіть інтерактивний Pod і підключіться до нього:
-
-```bash
-kubectl -n electrobb apply -f deploy/k8s/login.yaml
-kubectl -n electrobb wait --for=condition=Ready pod/electrobb-login --timeout=180s
-kubectl -n electrobb attach -it electrobb-login -c electrobb
-```
-
-Відскануйте QR-код у Telegram; якщо він уже прокрутився, перегляньте
-`kubectl -n electrobb logs electrobb-login -c electrobb`. За потреби введіть 2FA.
-Після повідомлення «Вход выполнен.» видаліть Pod та запустіть сервіс:
-
-```bash
-kubectl -n electrobb delete pod electrobb-login --wait=true
-kubectl -n electrobb apply -f deploy/k8s/deployment.yaml
-kubectl -n electrobb rollout status deployment/electrobb --timeout=180s
-kubectl -n electrobb logs -f deployment/electrobb --tail=100
-```
-
-Не застосовуйте всю директорію через `apply -f deploy/k8s/`: Pod входу запускається
-окремо, коли сервіс зупинений. Для повторного входу спочатку виконайте
-`kubectl -n electrobb scale deployment/electrobb --replicas=0` і дочекайтеся
-видалення робочого Pod (`kubectl -n electrobb wait --for=delete pod -l app=electrobb --timeout=180s`).
-Потім повторіть процедуру входу й застосуйте `deployment.yaml`.
-
-Стратегія `Recreate` зупиняє старий Pod перед оновленням. Залишайте одну репліку:
-спільна Telegram-сесія й стан не призначені для паралельних процесів.
-PVC зберігається після видалення Deployment; не видаляйте його для звичайного
-перезапуску. Новий PVC не містить локального `cache/state.json`, тому історія
-надісланих нагадувань починається заново. Для міграції зі збереженням історії
-перенесіть вміст локального `cache/` у каталог `cache/` PVC, поки обидва екземпляри
-зупинені, з власником `1000:1000`.
-
-Після зміни `.env` оновіть Secret і перезапустіть Pod (монтування `subPath`
-не оновлюється автоматично):
-
-```bash
-kubectl -n electrobb create secret generic electrobb-env --from-file=.env=.env --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n electrobb rollout restart deployment/electrobb
+kubectl -n electrobb rollout status deployment/electrobb --timeout=180s
 ```
 
-Для наступних релізів запускайте:
+Локальний `./deploy/deploy.sh` оновлює registry Secret з авторизації Docker,
+збирає й публікує образ, викликає серверний `k8s/apply.sh` та перезапускає Pod.
+Він не оновлює `.env` у Secret і не запускає Pod входу.
 
-```bash
-./deploy/deploy.sh
-```
-
-Скрипт можна викликати з будь-якого каталогу. Він спочатку оновлює
-`electrobb-registry` із локальної авторизації Docker, потім збирає та публікує
-`docker.virt.biz/electrobb:latest`, застосовує Deployment, примусово перезапускає
-Pod (тег залишається тим самим), чекає завершення rollout і показує останні
-100 рядків журналу. Використовується поточний контекст `kubectl` і namespace
-`electrobb`. Namespace, Secret, PVC і Telegram-сесія мають бути підготовлені
-за інструкцією вище; скрипт не оновлює `.env` у Secret та не запускає Pod входу.
-Помилка будь-якої команди зупиняє деплой.
-
- HTTP probes не задані: застосунок не має health endpoint;
-статус Ready означає запуск контейнера, а роботу монітора перевіряйте за журналами.
+Залишайте одну репліку та стратегію `Recreate`. PVC містить Telegram-сесію,
+історію та журнали; не видаляйте його при оновленні. Для міграції переносьте
+`cache/` у PVC лише із зупиненими екземплярами, з власником `1000:1000`.
+HTTP probes не задані; статус Ready означає запуск контейнера,
+роботу монітора перевіряйте за журналами.
 
 ## Запуск і керування
 
