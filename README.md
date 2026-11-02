@@ -361,3 +361,21 @@ chmod 600 /home/USER/.config/electrobb-heartbeat.curl
 Очікувана відповідь — `204`. Повторні спроби curl не налаштовані, щоб старий
 запит не зміщував час спостереження. Для прямого доступу без reverse proxy
 URL має вигляд `http://YOUR-SERVER:3000/heartbeat` з вашим портом.
+
+## Release
+
+```
+./build.sh
+
+cd ../server/electrobb
+
+nano .env
+./update-secrets.sh --restart
+
+# if changes were made in kube
+./k8s/apply.sh 
+
+kubectl -n electrobb rollout restart deployment/electrobb
+kubectl -n electrobb rollout status deployment/electrobb --timeout=180s
+kubectl -n electrobb logs -f deployment/electrobb --tail=100
+```
