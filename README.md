@@ -165,17 +165,27 @@ docker compose up -d
 За потреби задайте `storageClassName` і розмір PVC у `storage.yaml`.
 
 Образ тепер містить `src/`; Compose і надалі використовує локальний bind mount.
-Зберіть образ і завантажте його у свій registry:
+Зберіть образ і завантажте його в registry:
 
 ```bash
-docker build -t YOUR_REGISTRY/electrobb:YOUR_TAG .
-docker push YOUR_REGISTRY/electrobb:YOUR_TAG
+docker build -t docker.virt.biz/electrobb:latest .
+docker push docker.virt.biz/electrobb:latest
 ```
 
-Замініть **обидва** значення `image: electrobb:local` у кожному з файлів
-`deployment.yaml` та `login.yaml` на цей образ. Для приватного registry додайте
-`imagePullSecrets` до Pod spec. Для локального кластера можна залишити
-`electrobb:local`, попередньо завантаживши образ на його вузли.
+У `deployment.yaml` та `login.yaml` основний та init-контейнер використовують
+`docker.virt.biz/electrobb:latest` з `imagePullPolicy: Always`. При кожному запуску
+Pod Kubernetes перевіряє актуальний образ у registry; незмінені шари можуть
+використовуватися з кешу. Обидва Pod spec містять `imagePullSecrets` із назвою
+`electrobb-registry`. Після створення namespace авторизуйте Docker та створіть
+секрет для завантаження образу (потрібен Python 3):
+
+```bash
+docker login docker.virt.biz
+./deploy/registry-secret.sh
+```
+
+Скрипт переносить лише облікові дані `docker.virt.biz` із локальної конфігурації
+Docker, підтримує credential helpers і не виводить пароль.
 
 Створіть namespace і Secret із заповненого `.env`. Файл монтується безпосередньо,
 щоб зберегти правила dotenv, зокрема лапки навколо `BOT_COMMAND`:
@@ -228,8 +238,22 @@ kubectl -n electrobb create secret generic electrobb-env --from-file=.env=.env -
 kubectl -n electrobb rollout restart deployment/electrobb
 ```
 
-Після зміни коду зберіть образ із новим тегом, оновіть `image` в маніфестах
-і застосуйте Deployment. HTTP probes не задані: застосунок не має health endpoint;
+Для наступних релізів запускайте:
+
+```bash
+./deploy/deploy.sh
+```
+
+Скрипт можна викликати з будь-якого каталогу. Він спочатку оновлює
+`electrobb-registry` із локальної авторизації Docker, потім збирає та публікує
+`docker.virt.biz/electrobb:latest`, застосовує Deployment, примусово перезапускає
+Pod (тег залишається тим самим), чекає завершення rollout і показує останні
+100 рядків журналу. Використовується поточний контекст `kubectl` і namespace
+`electrobb`. Namespace, Secret, PVC і Telegram-сесія мають бути підготовлені
+за інструкцією вище; скрипт не оновлює `.env` у Secret та не запускає Pod входу.
+Помилка будь-якої команди зупиняє деплой.
+
+ HTTP probes не задані: застосунок не має health endpoint;
 статус Ready означає запуск контейнера, а роботу монітора перевіряйте за журналами.
 
 ## Запуск і керування
