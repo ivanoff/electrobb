@@ -1,10 +1,11 @@
 import { randomBytes, createHash } from 'node:crypto';
-import { parseOutages, eventKey, dayKey, local, quietTime, MINUTE } from './outages.js';
-import { newState, ingestParsed, queryDecision, planNotifications, applyDelivery, historyInterval } from './notifications.js';
+import { parseOutages, eventKey, dayKey, local, quietTime, silentTime, MINUTE } from './outages.js';
+import { newState, ingestParsed, queryDecision, planNotifications, applyDelivery, historyInterval, regularInterval } from './notifications.js';
 
 export class Monitor {
   constructor({ state, save, log, transport, config, account, now = Date.now }) {
     Object.assign(this, { state, save, log, transport, config, account, now });
+    this.startupPending = true;
   }
   async persist() { await this.save(this.state); }
   parse(message, source) {
@@ -36,9 +37,9 @@ export class Monitor {
   seedSnapshot(messages) {
     if (this.state.snapshot.at || this.state.seedChecked) return;
     this.state.seedChecked = true;
-    // Reuse a recent completed response, including one requested manually, to avoid another bot command.
+    // Seed notifications from history while the startup query waits for the rate limit.
     const message = [...messages].sort((a, b) => b.id - a.id).find(m => !m.out &&
-      (m.message || '').includes(`О/р ${this.account}`) && this.now() - (m.edit_date || m.date) * 1000 < 120 * MINUTE);
+      (m.message || '').includes(`О/р ${this.account}`) && this.now() - (m.edit_date || m.date) * 1000 < regularInterval);
     if (!message) return;
     const parsed = this.parse(message, 'snapshot');
     if (!parsed.recognized || parsed.errors.length) return;
@@ -46,7 +47,7 @@ export class Monitor {
     this.state.snapshot = { events: parsed.events, at };
     this.state.lastQuerySuccess = at;
     this.state.lastQueryAttempt = Math.max(this.state.lastQueryAttempt || 0, at);
-    this.log('snapshot_reused', { messageId: message.id, at, reason: 'recent_response_avoids_duplicate_query' });
+    this.log('snapshot_reused', { messageId: message.id, at, reason: 'recent_response_seeds_notifications' });
   }
   async failure(error, operation) {
     const message = error.error_message || error.message || String(error);
@@ -71,10 +72,11 @@ export class Monitor {
       } catch (error) { await this.failure(error, 'history_poll'); }
     }
     if ((this.state.blockedUntil || 0) > this.now()) return;
-    const query = queryDecision(this.state, this.now(), this.config);
+    const query = queryDecision(this.state, this.now(), this.config, this.startupPending);
     if (query.due) {
       this.state.lastQueryAttempt = this.now();
       await this.persist(); // Commit rate limit before the first network request, even if we crash.
+      this.startupPending = false;
       this.log('query_started', query);
       try {
         const { replies, observed } = await this.transport.query();
@@ -121,10 +123,13 @@ export class Monitor {
       if (pending.retryAfter > this.now()) continue;
       await this.persist();
       try {
-        await this.transport.send(pending.text, pending.randomId);
+        const sendTime = this.now();
+        if (quietTime(sendTime, this.config)) { this.log('send_suppressed', { reason: 'quiet_hours_started' }); break; }
+        const silent = silentTime(sendTime, this.config);
+        await this.transport.send(pending.text, pending.randomId, { silent });
         applyDelivery(this.state, pending.patch, this.now());
         delete this.state.outbox[notification.id];
-        this.log('notification_sent', { id: notification.id, type: pending.type, text: pending.text });
+        this.log('notification_sent', { id: notification.id, type: pending.type, text: pending.text, silent });
         await this.persist();
       } catch (error) {
         pending.retryAfter = this.now() + 60_000;

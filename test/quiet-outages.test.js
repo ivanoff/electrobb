@@ -8,7 +8,7 @@ const interval = (start, end, day='24', kind='planned') => ({start:at(start,day)
 const stateWith = events => ({...newState(),snapshot:{events,at:at('20:00')},morningDay:'2026-10-23'});
 const plan = (state,time='20:00',day='23',cfg=config) => planNotifications(state,at(time,day),cfg);
 test('tomorrow early outage is announced before quiet hours, without a new bot query',()=>{
-  const state=stateWith([interval('06:00','08:00')]);state.lastQueryAttempt=at('19:00');
+  const state=stateWith([interval('06:00','08:00')]);state.lastQueryAttempt=at('19:30');
   const result=plan(state);
   assert.equal(result.notifications.length,1);assert.equal(result.notifications[0].type,'upcoming_quiet_outage');
   assert.match(result.notifications[0].text,/завтра \(24\.10\) з 06:00 до 08:00/);

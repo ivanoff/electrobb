@@ -169,10 +169,10 @@ async function main() {
         return messages;
       },
       query: () => fetchSnapshot(bot),
-      send: (message, random_id) => call('messages.sendMessage', { peer: destination, message, random_id }),
+      send: (message, random_id, { silent = false } = {}) => call('messages.sendMessage', { peer: destination, message, random_id, silent }),
     },
   });
-  log('monitor_started', { config, queryMinutes: 120, historyMinutes: 10, minimumQueryMinutes: 15, destinationId: destination.channel_id || destination.chat_id });
+  log('monitor_started', { config, queryMinutes: 60, historyMinutes: 10, minimumQueryMinutes: 15, destinationId: destination.channel_id || destination.chat_id });
   do {
     try { await monitor.tick(); }
     catch (error) { await monitor.failure(error, 'tick'); }

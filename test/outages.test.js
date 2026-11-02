@@ -95,14 +95,15 @@ test('days beyond tomorrow and ended intervals are not sent', () => {
 });
 test('regular and end checks share one decision; crash/restart retains rate limit', () => {
   const state=snapshot([event('10:00','14:00')]); state.lastQueryAttempt=at('11:45');
-  const result=queryDecision(state,at('13:45'),config); assert.equal(result.due,true); assert.deepEqual(result.reasons,['regular_2h','confirm_end_15m']);
+  const result=queryDecision(state,at('13:45'),config); assert.equal(result.due,true); assert.deepEqual(result.reasons,['regular_1h','confirm_end_15m']);
   state.lastQueryAttempt=at('13:45');
   assert.equal(queryDecision(JSON.parse(JSON.stringify(state)),at('13:59'),config).due,false);
 });
 test('no regular retry every minute after a failed query', () => {
   const state=snapshot([]); state.lastQueryAttempt=at('10:00');
   assert.equal(queryDecision(state,at('10:01'),config).due,false);
-  assert.equal(queryDecision(state,at('12:00'),config).due,true);
+  assert.equal(queryDecision(state,at('10:59'),config).due,false);
+  assert.equal(queryDecision(state,at('11:00'),config).due,true);
 });
 test('Kyiv date, quiet boundaries and DST offsets ignore host timezone', () => {
   assert.equal(dayKey(Date.parse('2026-10-22T22:30:00Z')),'2026-10-23');

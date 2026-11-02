@@ -93,6 +93,7 @@ export function todayIntervals(state, now) {
   return mergeIntervals(effectiveEvents(state)).filter(i => i.end > now && i.start < endOfDay);
 }
 export function upcomingQuietWindow(now, config) {
+  if (config.quietStart == null || config.quietEnd == null) return null;
   let start = local(now).set({ hour: Math.floor(config.quietStart / 60), minute: config.quietStart % 60, second: 0, millisecond: 0 });
   if (start.toMillis() <= now) start = start.plus({ days: 1 });
   const endDay = config.quietStart > config.quietEnd ? start.plus({ days: 1 }) : start;
@@ -101,11 +102,18 @@ export function upcomingQuietWindow(now, config) {
 }
 export function upcomingQuietIntervals(state, now, config) {
   const window = upcomingQuietWindow(now, config);
+  if (!window) return [];
   return mergeIntervals(effectiveEvents(state)).filter(i => i.start < window.end && i.end > window.start);
 }
 export function quietTime(now, config) {
+  if (config.quietStart == null || config.quietEnd == null) return false;
   const date = local(now), minute = date.hour * 60 + date.minute;
   const start = config.quietStart, end = config.quietEnd;
+  return start > end ? minute >= start || minute < end : minute >= start && minute < end;
+}
+export function silentTime(now, config) {
+  const date = local(now), minute = date.hour * 60 + date.minute;
+  const start = config.silentStart, end = config.silentEnd;
   return start > end ? minute >= start || minute < end : minute >= start && minute < end;
 }
 export function describe(interval, now) {

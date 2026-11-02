@@ -9,19 +9,39 @@ const message = (id, from='18:30', to='22:00') => ({ id, date: at('09:00')/1000,
 function harness(time='10:00', overrides={}) {
   const state = newState(), sent=[], logs=[], queries=[], reads=[], saves=[];
   let now=at(time);
-  const monitor=new Monitor({ state, account, config:{quietStart:1320,quietEnd:540}, now:()=>now,
+  const monitor=new Monitor({ state, account, config:{quietStart:1320,quietEnd:540,silentStart:1200,silentEnd:660}, now:()=>now,
     log:(event,data)=>logs.push({event,...data}), save:async s=>saves.push(structuredClone(s)),
     transport:{ historySince:async()=>{reads.push(now);return[];}, query:async()=>{queries.push(now);return {replies:[message(1)],observed:[]};},
-      send:async(text,id)=>sent.push({text,id}), ...overrides } });
+      send:async(text,id,options)=>sent.push({text,id,...options}), ...overrides } });
   return {state,monitor,sent,logs,queries,reads,saves,setTime:t=>{now=at(t);}};
 }
 test('single snapshot satisfies multiple timers, no bot requests from local timer ticks', async()=>{
   const h=harness('10:00'); await h.monitor.tick();
   assert.equal(h.queries.length,1); assert.equal(h.sent.length,1);
-  for(const t of ['10:01','10:02','10:09','10:10','11:59']){h.setTime(t);await h.monitor.tick();}
+  for(const t of ['10:01','10:02','10:09','10:10','10:59']){h.setTime(t);await h.monitor.tick();}
   assert.equal(h.queries.length,1);assert.equal(h.sent.length,1);
-  h.setTime('12:00');await h.monitor.tick();assert.equal(h.queries.length,2);
+  h.setTime('11:00');await h.monitor.tick();assert.equal(h.queries.length,2);
   assert(h.saves.some(s=>s.lastQueryAttempt===at('10:00')&&!s.lastQuerySuccess));
+});
+test('delivery is silent only in the two-hour windows around quiet hours', async()=>{
+  for (const [time, silent] of [['09:00',true],['10:59',true],['11:00',false],['19:59',false],['20:00',true],['21:59',true]]) {
+    const h=harness(time,{query:async()=>({replies:[message(1,'21:00','23:00')],observed:[]})});
+    await h.monitor.tick();
+    assert(h.sent.length>0,time);
+    assert(h.sent.every(m=>m.silent===silent),time);
+  }
+});
+test('retry recalculates silent mode at delivery time', async()=>{
+  const attempts=[];
+  const h=harness('10:59',{send:async(text,id,options)=>{
+    attempts.push({id,...options});
+    if(attempts.length===1) throw new Error('network');
+  }});
+  await h.monitor.tick();
+  h.setTime('11:00');await h.monitor.tick();
+  assert.equal(attempts.length,2);
+  assert.equal(attempts[0].id,attempts[1].id);
+  assert.deepEqual(attempts.map(a=>a.silent),[true,false]);
 });
 test('normal and restoration checks at same time execute exactly one query', async()=>{
   let count=0;
@@ -53,7 +73,7 @@ test('quiet time blocks previously pending sends and morning rebuilds current me
 });
 test('passive push is processed without a bot command', async()=>{
   const push={id:10,date:at('10:00')/1000,message:`АТ повідомляє про планову перерву в електропостачанні за адресою: X\nособовий рахунок – ${account}.\nДата/час перерви:\nз 23-10-2026 18:30\nпо 23-10-2026 22:00 орієнтовно.\nПричина: Заходи обмеження.\nСтатус: РОБОТИ ЗАПЛАНОВАНО`};
-  const h=harness('10:00',{historySince:async()=>[push]});h.state.lastQueryAttempt=at('09:00');
+  const h=harness('10:00',{historySince:async()=>[push]});h.state.lastQueryAttempt=at('09:30');h.monitor.startupPending=false;
   await h.monitor.tick(); assert.equal(h.queries.length,0);assert.equal(h.sent.length,1);assert.match(h.sent[0].text,/18:30 до 22:00/);
   h.setTime('10:10');await h.monitor.tick();assert.equal(h.sent.length,1);
 });
@@ -67,4 +87,33 @@ test('FLOOD_WAIT is persisted and pauses all network work',async()=>{
   const h=harness('10:00',{historySince:async()=>{calls++;throw {error_message:'FLOOD_WAIT_1800'};}});
   await h.monitor.tick();assert.equal(h.state.blockedUntil,at('10:00')+30*MINUTE);
   h.setTime('10:15');await h.monitor.tick();assert.equal(calls,1);assert.equal(h.queries.length,0);
+});
+
+test('startup requests fresh data despite a recent saved snapshot, respecting minimum spacing', async()=>{
+  const h=harness('10:00');
+  h.state.lastQueryAttempt=at('09:50');h.state.snapshot.at=at('09:50');
+  await h.monitor.tick();assert.equal(h.queries.length,0);
+  h.setTime('10:05');await h.monitor.tick();assert.equal(h.queries.length,1);
+  h.setTime('10:20');await h.monitor.tick();assert.equal(h.queries.length,1);
+});
+test('checks five minutes after merged restoration during quiet hours, only once', async()=>{
+  const h=harness('21:45',{query:async()=>({replies:[message(1,'20:00','22:00'),message(2,'21:00','22:10')],observed:[]})});
+  await h.monitor.tick();
+  h.setTime('22:05');await h.monitor.tick();assert.equal(h.logs.filter(l=>l.event==='query_started').length,1);
+  h.setTime('22:15');await h.monitor.tick();
+  assert.equal(h.logs.filter(l=>l.event==='query_started').length,2);
+  assert(h.logs.some(l=>l.event==='query_started'&&l.reasons.includes('after_end_5m')));
+  h.setTime('22:30');await h.monitor.tick();
+  assert.equal(h.logs.filter(l=>l.event==='query_started').length,2);
+});
+test('after restoration check waits for rate limit and failed attempt is not repeated', async()=>{
+  const h=harness('14:00',{query:async()=>{throw new Error('network');}});
+  h.monitor.startupPending=false;
+  h.state.lastQueryAttempt=at('13:59');
+  h.state.snapshot.events=[{kind:'planned',start:at('12:00'),end:at('14:00')}];
+  h.setTime('14:05');await h.monitor.tick();
+  assert.equal(h.logs.filter(l=>l.event==='query_started').length,0);
+  h.setTime('14:14');await h.monitor.tick();
+  h.setTime('14:30');await h.monitor.tick();
+  assert.equal(h.logs.filter(l=>l.event==='query_started').length,1);
 });
