@@ -5,3 +5,4 @@ cache/
 logs/
 deploy/deploy.sh
 deploy/registry-secret.sh
+tmp/

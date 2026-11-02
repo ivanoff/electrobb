@@ -1,3 +1,4 @@
+import { heartbeatConfig, startHeartbeat } from './heartbeat.js';
 import { Monitor, migrateState } from './monitor.js';
 import { configFromEnv } from './config.js';
 import { createLogger } from './log.js';
@@ -146,6 +147,7 @@ async function main() {
     return;
   }
   const config = configFromEnv();
+  const heartbeat = heartbeatConfig();
   if (!!process.env.BOT_COMMAND === !!process.env.BOT_BUTTON) throw new Error('Задайте ровно одно: BOT_COMMAND или BOT_BUTTON.');
   if (process.argv.includes('--preview')) {
     const messages = await history(bot);
@@ -172,6 +174,11 @@ async function main() {
       send: (message, random_id, { silent = false } = {}) => call('messages.sendMessage', { peer: destination, message, random_id, silent }),
     },
   });
+  if (heartbeat && !process.argv.includes('--once')) {
+    await startHeartbeat({ ...heartbeat, path: resolve(root, 'cache/heartbeat.json'), config, log,
+      send: (message, random_id, { silent }) => call('messages.sendMessage', { peer: destination, message, random_id, silent }),
+    });
+  }
   log('monitor_started', { config, queryMinutes: 60, historyMinutes: 10, minimumQueryMinutes: 15, destinationId: destination.channel_id || destination.chat_id });
   do {
     try { await monitor.tick(); }
