@@ -107,3 +107,37 @@ test('outage announcements place the date once and distinguish midnight from ove
     assert.equal(result.notifications[0].text, `Планове відключення електроенергії: ${expected}.`);
   }
 });
+
+test('simultaneous tomorrow announcements combine and persist every interval', () => {
+  let state = stateWith([interval('06:00', '13:00'), interval('16:30', '23:30')]);
+  const cfg = { quietStart: null, quietEnd: null };
+  const result = plan(state, '20:00', '23', cfg);
+  assert.equal(result.notifications.length, 1);
+  assert.equal(result.notifications[0].text,
+    'Планове відключення електроенергії: завтра (24.10):\n- з 06:00 до 13:00.\n- з 16:30 до 23:30.');
+  assert.equal(result.notifications[0].patch.announced.length, 2);
+  assert.equal(plan(state, '20:00', '23', cfg).notifications[0].id, result.notifications[0].id);
+  applyDelivery(state, result.notifications[0].patch, at('20:00'));
+  state = JSON.parse(JSON.stringify(state));
+  assert.equal(plan(state, '20:10', '23', cfg).notifications.length, 0);
+  state.snapshot.events[1].end = at('23:45', '24');
+  const changed = plan(state, '20:20', '23', cfg);
+  assert.equal(changed.notifications.length, 1);
+  assert.match(changed.notifications[0].text, /23:30 → 24.10 23:45/);
+});
+
+test('kind changes with unchanged hours do not repeat ongoing outage announcements', () => {
+  const state = stateWith([interval('06:00', '13:00', '23')]);
+  const cfg = { quietStart: null, quietEnd: null };
+  for (const n of plan(state, '05:00', '23', cfg).notifications) {
+    applyDelivery(state, n.patch, at('05:00'));
+  }
+  state.snapshot.events.push(interval('06:00', '13:00', '23', 'emergency'));
+  assert.equal(plan(state, '06:05', '23', cfg).notifications.length, 0);
+  state.snapshot.events.pop();
+  assert.equal(plan(state, '06:10', '23', cfg).notifications.length, 0);
+  state.snapshot.events[0].end = at('14:00');
+  const changed = plan(state, '06:20', '23', cfg);
+  assert.equal(changed.notifications.length, 1);
+  assert.match(changed.notifications[0].text, /13:00 → 14:00/);
+});

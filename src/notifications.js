@@ -56,7 +56,7 @@ export function planNotifications(state, now, config) {
   }
   for (const interval of intervals) {
     const key = intervalKey(day, interval), previous = working.announced[key];
-    if (!previous || previous.end !== interval.end || previous.kinds.join() !== interval.kinds.join()) {
+    if (!previous || previous.end !== interval.end) {
       let text = describe(interval, now);
       if (previous && previous.end !== interval.end) text = `Час завершення відключення змінено: ${timeLabel(previous.end, now)} → ${timeLabel(interval.end, now)}.\n${text}`;
       add(previous ? 'interval_changed' : 'new_interval', text, { announced: [record(interval)], sent: startKeys(interval) });
@@ -81,7 +81,7 @@ export function planNotifications(state, now, config) {
   const quietIntervals = upcomingQuietIntervals(state, now, config).filter(i => !todayStarts.has(i.start));
   for (const interval of quietIntervals) {
     const previous = working.announced[intervalKey(day, interval)];
-    if (!previous || previous.end !== interval.end || previous.kinds.join() !== interval.kinds.join()) {
+    if (!previous || previous.end !== interval.end) {
       const change = previous && previous.end !== interval.end
         ? `Час завершення відключення змінено: ${timeLabel(previous.end, now)} → ${timeLabel(interval.end, now)}.\n` : '';
       add(previous ? 'quiet_interval_changed' : 'upcoming_quiet_outage',
@@ -96,7 +96,7 @@ export function planNotifications(state, now, config) {
     .filter(i => i.start >= tomorrowStart && i.start < tomorrowEnd);
   for (const interval of tomorrowIntervals) {
     const previous = working.announced[intervalKey(day, interval)];
-    if (!previous || previous.end !== interval.end || previous.kinds.join() !== interval.kinds.join()) {
+    if (!previous || previous.end !== interval.end) {
       const change = previous && previous.end !== interval.end
         ? `Час завершення відключення змінено: ${timeLabel(previous.end, now)} → ${timeLabel(interval.end, now)}.\n` : '';
       add(previous ? 'interval_changed' : 'new_interval', `${change}${describe(interval, now)}`,
@@ -113,7 +113,25 @@ export function planNotifications(state, now, config) {
     if (!working.unknownSent[type]) add('unknown_type', `Невідомий тип відключення: «${info.reason.slice(0, 500)}». Потрібне уточнення правил; цей тип не враховано в розкладі.`, { unknown: [type] });
   }
   if (!notifications.length) decisions.push({ reason: intervals.length || quietIntervals.length || tomorrowIntervals.length ? 'no_new_or_due_notifications' : 'no_remaining_outages_today' });
-  return { notifications, decisions, intervals, quietIntervals };
+  // Combine simultaneous first announcements with the same description and date.
+  // Keep patches together so retries and successful delivery cover every interval.
+  const grouped = [];
+  for (const notification of notifications) {
+    const match = ['new_interval', 'upcoming_quiet_outage'].includes(notification.type)
+      && notification.text.match(/^([\s\S]*?: (?:завтра \(\d{2}\.\d{2}\) |\d{2}\.\d{2} )?)(з .*)$/);
+    const group = match && grouped.find(g => g.header === match[1] && g.type === notification.type
+      && g.text.length + match[2].length + 4 < 3500);
+    if (group) {
+      group.lines.push(match[2]);
+      group.text = group.header.trimEnd() + (group.header.trimEnd().endsWith(':') ? '' : ':')
+        + '\n' + group.lines.map(line => '- ' + line).join('\n');
+      group.patch.announced.push(...notification.patch.announced);
+      group.patch.sent = [...(group.patch.sent || []), ...(notification.patch.sent || [])];
+      group.id = createHash('sha256').update(JSON.stringify([group.type, group.patch, group.text])).digest('hex');
+    } else grouped.push({ ...notification, patch: structuredClone(notification.patch),
+      ...(match ? { header: match[1], lines: [match[2]] } : {}) });
+  }
+  return { notifications: grouped.map(({ header, lines, ...notification }) => notification), decisions, intervals, quietIntervals };
 }
 export function ingestParsed(state, parsed, log) {
   for (const item of parsed.unknown) state.unknown[normalize(item.reason)] = item;

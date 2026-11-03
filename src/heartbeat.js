@@ -10,7 +10,11 @@ export function heartbeatConfig(env = process.env) {
     throw new Error('HEARTBEAT_PORT must be an integer from 1 to 65535');
   }
   if (!env.HEARTBEAT_TOKEN || /\s/.test(env.HEARTBEAT_TOKEN)) throw new Error('HEARTBEAT_TOKEN must be nonempty and contain no whitespace');
-  return { port: Number(env.HEARTBEAT_PORT), token: env.HEARTBEAT_TOKEN };
+  const timeoutMinutes = Number(env.HEARTBEAT_TIMEOUT_MINUTES || 5);
+  if (!Number.isSafeInteger(timeoutMinutes) || timeoutMinutes < 1) {
+    throw new Error('HEARTBEAT_TIMEOUT_MINUTES must be a positive integer');
+  }
+  return { port: Number(env.HEARTBEAT_PORT), token: env.HEARTBEAT_TOKEN, timeoutMinutes };
 }
 
 export function dailyReport(state, date) {
@@ -32,9 +36,9 @@ export function dailyReport(state, date) {
 }
 
 export class HeartbeatMonitor {
-  constructor({ state = {}, save, send, config, now = Date.now, log = () => {} }) {
+  constructor({ state = {}, save, send, config, timeoutMinutes = 5, now = Date.now, log = () => {} }) {
     this.state = { outages: [], outbox: [], ...state };
-    Object.assign(this, { save, send, config, now, log });
+    Object.assign(this, { save, send, config, timeoutMinutes, now, log });
     this.online = false;
     this.ready = false;
     // A previous process's last observation is the limit of known downtime.
@@ -45,11 +49,11 @@ export class HeartbeatMonitor {
   enqueue(text) { this.state.outbox.push({ text, randomId: randomBytes(8).readBigInt64LE().toString() }); }
   check(now) {
     if (!this.ready) return;
-    if (this.online && now - this.lastHeartbeat >= 5 * MINUTE) {
+    if (this.online && now - this.lastHeartbeat >= this.timeoutMinutes * MINUTE) {
       this.online = false;
       const start = this.lastHeartbeat + MINUTE;
       this.state.outages.push({ start, end: null });
-      this.enqueue(`🔴 Світло вимкнено о ${local(start).toFormat('dd.MM.yyyy HH:mm:ss')}.`);
+      this.enqueue(`🔴 Світло вимкнено о ${local(start).toFormat('HH:mm')}.`);
     }
     this.state.observedUntil = now;
   }
@@ -59,7 +63,7 @@ export class HeartbeatMonitor {
     if (!this.online) {
       const outage = this.state.outages.at(-1);
       if (outage?.end === null) outage.end = now;
-      this.enqueue(`🟢 Світло увімкнено о ${local(now).toFormat('dd.MM.yyyy HH:mm:ss')}.`);
+      this.enqueue(`🟢 Світло увімкнено о ${local(now).toFormat('HH:mm')}.`);
     }
     this.ready = true;
     this.online = true;
@@ -115,11 +119,11 @@ export function heartbeatServer({ monitor, token, log = () => {} }) {
   });
 }
 
-export async function startHeartbeat({ port, token, path, send, config, log }) {
+export async function startHeartbeat({ port, token, timeoutMinutes = 5, path, send, config, log }) {
   let state = {};
   try { state = JSON.parse(readFileSync(path, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const monitor = new HeartbeatMonitor({ state, send, config, log, save(value) {
+  const monitor = new HeartbeatMonitor({ state, send, config, timeoutMinutes, log, save(value) {
     writeFileSync(path + '.tmp', JSON.stringify(value), { mode: 0o600 });
     renameSync(path + '.tmp', path);
   } });

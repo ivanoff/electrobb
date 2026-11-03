@@ -23,7 +23,8 @@ test('five misses: report 12:01 at 12:05, recover once, ignore startup time', as
   assert.equal(f.monitor.state.outages.length, 0);
   f.set('01-11-2026 12:05'); f.monitor.check(parseDate('01-11-2026 12:05'));
   await f.monitor.deliver();
-  assert.match(f.sent[1][0], /12:01:00/);
+  assert.equal(f.sent[0][0], '🟢 Світло увімкнено о 12:00.');
+  assert.equal(f.sent[1][0], '🔴 Світло вимкнено о 12:01.');
   f.set('01-11-2026 12:05'); f.monitor.heartbeat(); f.monitor.heartbeat(); await f.monitor.deliver();
   assert.equal(f.sent.length, 3);
   assert.deepEqual(f.monitor.state.outages, [{ start: parseDate('01-11-2026 12:01'), end: parseDate('01-11-2026 12:05') }]);
@@ -78,7 +79,7 @@ test('HTTP endpoint accepts only POST with correct bearer token', async () => {
 test('port and token must be configured together', () => {
   assert.equal(heartbeatConfig({}), null);
   for (const env of [{ HEARTBEAT_PORT: '3000' }, { HEARTBEAT_TOKEN: 'x' }, { HEARTBEAT_PORT: '65536', HEARTBEAT_TOKEN: 'x' }]) assert.throws(() => heartbeatConfig(env));
-  assert.deepEqual(heartbeatConfig({ HEARTBEAT_PORT: '3000', HEARTBEAT_TOKEN: 'x' }), { port: 3000, token: 'x' });
+  assert.deepEqual(heartbeatConfig({ HEARTBEAT_PORT: '3000', HEARTBEAT_TOKEN: 'x' }), { port: 3000, token: 'x', timeoutMinutes: 5 });
 });
 
 test('startup and confirmation grace do not enable accelerated schedule queries', () => {
@@ -103,4 +104,24 @@ test('24-hour report is skipped and marked processed; shorter outages are report
   assert.equal(f.sent.length, 0);
   const shorter = { outages: [{ start: parseDate('01-11-2026 00:00'), end: parseDate('02-11-2026 00:00') - 1000 }] };
   assert.match(dailyReport(shorter, local(parseDate('01-11-2026 12:00')))[0], /23 год 59 хв 59 с/);
+});
+
+test('configured heartbeat timeout controls confirmation boundary', () => {
+  for (const timeoutMinutes of [1, 3, 10]) {
+    const options = heartbeatConfig({ HEARTBEAT_PORT: '3000', HEARTBEAT_TOKEN: 'x',
+      HEARTBEAT_TIMEOUT_MINUTES: String(timeoutMinutes) });
+    const f = setup();
+    f.monitor.timeoutMinutes = options.timeoutMinutes;
+    f.monitor.heartbeat();
+    const boundary = parseDate('01-11-2026 12:00') + timeoutMinutes * 60000;
+    f.monitor.check(boundary - 1);
+    assert.equal(f.monitor.online, true);
+    f.monitor.check(boundary);
+    assert.equal(f.monitor.online, false);
+    assert.equal(f.monitor.state.outages[0].start, parseDate('01-11-2026 12:01'));
+  }
+  for (const value of ['0', '-1', '1.5', 'abc', 'Infinity']) {
+    assert.throws(() => heartbeatConfig({ HEARTBEAT_PORT: '3000', HEARTBEAT_TOKEN: 'x',
+      HEARTBEAT_TIMEOUT_MINUTES: value }), /HEARTBEAT_TIMEOUT_MINUTES/);
+  }
 });
