@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { local, silentTime } from './outages.js';
+import { local, silentTime, effectiveEvents, mergeIntervals } from './outages.js';
 
 const MINUTE = 60_000;
 export function heartbeatConfig(env = process.env) {
@@ -35,10 +35,25 @@ export function dailyReport(state, date) {
   return parts;
 }
 
+export function powerMessage(online, at, schedule = {}) {
+  const intervals = mergeIntervals(effectiveEvents(schedule));
+  const interval = intervals.find(i => online ? i.start > at : i.end > at);
+  const until = interval && (online ? interval.start : interval.end);
+  let suffix = '';
+  if (until != null) {
+    const date = local(until), today = local(at);
+    const label = date.toISODate() === today.toISODate() ? date.toFormat('HH:mm')
+      : date.toISODate() === today.plus({ days: 1 }).toISODate()
+        ? `завтра, ${date.toFormat('dd.MM HH:mm')}` : date.toFormat('dd.MM HH:mm');
+    suffix = ` (до ${label})`;
+  }
+  return `${online ? '⚡️ Світло увімкнено' : '🪫 Світло вимкнено'} о ${local(at).toFormat('HH:mm')}${suffix}.`;
+}
+
 export class HeartbeatMonitor {
-  constructor({ state = {}, save, send, config, timeoutMinutes = 5, now = Date.now, log = () => {} }) {
+  constructor({ state = {}, save, send, config, timeoutMinutes = 5, now = Date.now, log = () => {}, getSchedule = () => ({}) }) {
     this.state = { outages: [], outbox: [], ...state };
-    Object.assign(this, { save, send, config, timeoutMinutes, now, log });
+    Object.assign(this, { save, send, config, timeoutMinutes, now, log, getSchedule });
     this.online = false;
     this.ready = false;
     // A previous process's last observation is the limit of known downtime.
@@ -53,7 +68,7 @@ export class HeartbeatMonitor {
       this.online = false;
       const start = this.lastHeartbeat + MINUTE;
       this.state.outages.push({ start, end: null });
-      this.enqueue(`🔴 Світло вимкнено о ${local(start).toFormat('HH:mm')}.`);
+      this.enqueue(powerMessage(false, start, this.getSchedule()));
     }
     this.state.observedUntil = now;
   }
@@ -63,7 +78,7 @@ export class HeartbeatMonitor {
     if (!this.online) {
       const outage = this.state.outages.at(-1);
       if (outage?.end === null) outage.end = now;
-      this.enqueue(`🟢 Світло увімкнено о ${local(now).toFormat('HH:mm')}.`);
+      this.enqueue(powerMessage(true, now, this.getSchedule()));
     }
     this.ready = true;
     this.online = true;
@@ -119,11 +134,11 @@ export function heartbeatServer({ monitor, token, log = () => {} }) {
   });
 }
 
-export async function startHeartbeat({ port, token, timeoutMinutes = 5, path, send, config, log }) {
+export async function startHeartbeat({ port, token, timeoutMinutes = 5, path, send, config, log, getSchedule }) {
   let state = {};
   try { state = JSON.parse(readFileSync(path, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const monitor = new HeartbeatMonitor({ state, send, config, timeoutMinutes, log, save(value) {
+  const monitor = new HeartbeatMonitor({ state, send, config, timeoutMinutes, log, getSchedule, save(value) {
     writeFileSync(path + '.tmp', JSON.stringify(value), { mode: 0o600 });
     renameSync(path + '.tmp', path);
   } });

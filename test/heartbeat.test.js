@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HeartbeatMonitor, heartbeatServer, heartbeatConfig, dailyReport } from '../src/heartbeat.js';
+import { HeartbeatMonitor, heartbeatServer, heartbeatConfig, dailyReport, powerMessage } from '../src/heartbeat.js';
 import { local, parseDate } from '../src/outages.js';
 
 function setup(state = {}, start = '01-11-2026 12:00') {
@@ -23,8 +23,8 @@ test('five misses: report 12:01 at 12:05, recover once, ignore startup time', as
   assert.equal(f.monitor.state.outages.length, 0);
   f.set('01-11-2026 12:05'); f.monitor.check(parseDate('01-11-2026 12:05'));
   await f.monitor.deliver();
-  assert.equal(f.sent[0][0], '🟢 Світло увімкнено о 12:00.');
-  assert.equal(f.sent[1][0], '🔴 Світло вимкнено о 12:01.');
+  assert.equal(f.sent[0][0], '⚡️ Світло увімкнено о 12:00.');
+  assert.equal(f.sent[1][0], '🪫 Світло вимкнено о 12:01.');
   f.set('01-11-2026 12:05'); f.monitor.heartbeat(); f.monitor.heartbeat(); await f.monitor.deliver();
   assert.equal(f.sent.length, 3);
   assert.deepEqual(f.monitor.state.outages, [{ start: parseDate('01-11-2026 12:01'), end: parseDate('01-11-2026 12:05') }]);
@@ -124,4 +124,56 @@ test('configured heartbeat timeout controls confirmation boundary', () => {
     assert.throws(() => heartbeatConfig({ HEARTBEAT_PORT: '3000', HEARTBEAT_TOKEN: 'x',
       HEARTBEAT_TIMEOUT_MINUTES: value }), /HEARTBEAT_TIMEOUT_MINUTES/);
   }
+});
+
+const scheduleOf = ranges => ({ snapshot: { events: ranges.map(([start, end]) => ({
+  kind: 'planned', start: parseDate(start), end: parseDate(end),
+})) } });
+
+test('power messages follow the six examples and exact interval boundaries', () => {
+  const schedule = scheduleOf([
+    ['03-11-2026 13:00', '03-11-2026 16:00'],
+    ['03-11-2026 20:00', '03-11-2026 22:00'],
+  ]);
+  for (const [online, time, until] of [
+    [true, '12:00', '13:00'], [true, '14:00', '20:00'], [true, '23:00', null],
+    [false, '12:00', '16:00'], [false, '14:00', '16:00'], [false, '23:00', null],
+    [true, '13:00', '20:00'], [false, '16:00', '22:00'], [false, '22:00', null],
+  ]) {
+    assert.equal(powerMessage(online, parseDate(`03-11-2026 ${time}`), schedule),
+      `${online ? '⚡️ Світло увімкнено' : '🪫 Світло вимкнено'} о ${time}${until ? ` (до ${until})` : ''}.`);
+  }
+});
+
+test('power forecasts merge overlapping and adjacent intervals and label future dates', () => {
+  const schedule = scheduleOf([
+    ['03-11-2026 13:00', '03-11-2026 16:00'],
+    ['03-11-2026 15:00', '03-11-2026 17:00'],
+    ['03-11-2026 17:00', '04-11-2026 06:00'],
+  ]);
+  assert.equal(powerMessage(false, parseDate('03-11-2026 14:00'), schedule),
+    '🪫 Світло вимкнено о 14:00 (до завтра, 04.11 06:00).');
+  assert.equal(powerMessage(true, parseDate('03-11-2026 14:00'), schedule),
+    '⚡️ Світло увімкнено о 14:00.');
+  const future = scheduleOf([['04-11-2026 06:00', '05-11-2026 10:00']]);
+  assert.equal(powerMessage(true, parseDate('03-11-2026 23:00'), future),
+    '⚡️ Світло увімкнено о 23:00 (до завтра, 04.11 06:00).');
+  assert.equal(powerMessage(false, parseDate('03-11-2026 23:00'), future),
+    '🪫 Світло вимкнено о 23:00 (до 05.11 10:00).');
+});
+
+test('heartbeat uses latest schedule and outage event time before timeout confirmation', () => {
+  const f = setup({}, '03-11-2026 15:58');
+  let schedule = {};
+  f.monitor.getSchedule = () => schedule;
+  f.monitor.heartbeat();
+  assert.equal(f.monitor.state.outbox.at(-1).text, '⚡️ Світло увімкнено о 15:58.');
+  schedule = scheduleOf([
+    ['03-11-2026 13:00', '03-11-2026 16:00'],
+    ['03-11-2026 20:00', '03-11-2026 22:00'],
+  ]);
+  f.set('03-11-2026 16:03'); f.monitor.check(parseDate('03-11-2026 16:03'));
+  assert.equal(f.monitor.state.outbox.at(-1).text, '🪫 Світло вимкнено о 15:59 (до 16:00).');
+  f.monitor.heartbeat();
+  assert.equal(f.monitor.state.outbox.at(-1).text, '⚡️ Світло увімкнено о 16:03 (до 20:00).');
 });
