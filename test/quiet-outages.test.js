@@ -104,7 +104,7 @@ test('outage announcements place the date once and distinguish midnight from ove
     state.morningDay = `2026-10-${today}`;
     const result = plan(state, '09:00', today);
     assert.equal(result.notifications.length, 1);
-    assert.equal(result.notifications[0].text, `Планове відключення електроенергії: ${expected}.`);
+    assert.equal(result.notifications[0].text, `Планове відключення: ${expected}.`);
   }
 });
 
@@ -114,7 +114,7 @@ test('simultaneous tomorrow announcements combine and persist every interval', (
   const result = plan(state, '20:00', '23', cfg);
   assert.equal(result.notifications.length, 1);
   assert.equal(result.notifications[0].text,
-    'Планове відключення електроенергії: завтра (24.10):\n- з 06:00 до 13:00.\n- з 16:30 до 23:30.');
+    'Планове відключення: завтра (24.10):\n- з 06:00 до 13:00.\n- з 16:30 до 23:30.');
   assert.equal(result.notifications[0].patch.announced.length, 2);
   assert.equal(plan(state, '20:00', '23', cfg).notifications[0].id, result.notifications[0].id);
   applyDelivery(state, result.notifications[0].patch, at('20:00'));

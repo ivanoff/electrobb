@@ -149,3 +149,42 @@ test('unexpected outage queries during quiet hours; failures still wait 15 minut
   h.setTime('06:31'); await h.monitor.tick(); assert.equal(attempts, 1);
   h.setTime('06:45'); await h.monitor.tick(); assert.equal(attempts, 2);
 });
+
+
+test('heartbeat refresh queries before returning, defers inside cooldown and survives restart', async () => {
+  const h = harness('10:00');
+  h.monitor.startupPending = false;
+  await h.monitor.refreshForHeartbeat();
+  assert.equal(h.queries.length, 1);
+  assert.equal(h.state.lastQuerySuccess, at('10:00'));
+  assert.equal(h.sent.length, 0);
+  h.setTime('10:01');
+  await h.monitor.refreshForHeartbeat();
+  assert.equal(h.queries.length, 1);
+  assert.equal(h.state.heartbeatQueryPending, true);
+  h.monitor.state = JSON.parse(JSON.stringify(h.state));
+  h.setTime('10:14'); await h.monitor.tick();
+  assert.equal(h.queries.length, 1);
+  h.setTime('10:15'); await h.monitor.tick();
+  assert.equal(h.queries.length, 2);
+  assert.equal(h.monitor.state.heartbeatQueryPending, false);
+  h.setTime('10:30'); await h.monitor.tick();
+  assert.equal(h.queries.length, 2);
+});
+
+test('concurrent heartbeat refresh and timer never overlap queries', async () => {
+  const h = harness();
+  await Promise.all([h.monitor.refreshForHeartbeat(), h.monitor.tick()]);
+  assert.equal(h.queries.length, 1);
+});
+
+test('failed heartbeat query releases notification preparation and respects cooldown', async () => {
+  let attempts = 0;
+  const h = harness('10:00', { query: async () => { attempts++; throw new Error('offline'); } });
+  await h.monitor.refreshForHeartbeat();
+  assert.equal(attempts, 1);
+  h.setTime('10:01'); await h.monitor.refreshForHeartbeat();
+  assert.equal(attempts, 1);
+  h.setTime('10:15'); await h.monitor.tick();
+  assert.equal(attempts, 2);
+});

@@ -51,24 +51,38 @@ export function powerMessage(online, at, schedule = {}) {
 }
 
 export class HeartbeatMonitor {
-  constructor({ state = {}, save, send, config, timeoutMinutes = 5, now = Date.now, log = () => {}, getSchedule = () => ({}) }) {
+  constructor({ state = {}, save, send, config, timeoutMinutes = 5, now = Date.now, log = () => {}, getSchedule = () => ({}), refreshSchedule = async () => {} }) {
     this.state = { outages: [], outbox: [], ...state };
-    Object.assign(this, { save, send, config, timeoutMinutes, now, log, getSchedule });
-    this.online = false;
+    Object.assign(this, { save, send, config, timeoutMinutes, now, log, getSchedule, refreshSchedule });
+    // Older cache files have no explicit status: an open outage means offline.
+    this.online = typeof state.online === 'boolean' ? state.online
+      : state.observedUntil != null ? !this.state.outages.some(outage => outage.end == null) : null;
+    this.startedAt = this.now();
     this.ready = false;
     // A previous process's last observation is the limit of known downtime.
     for (const outage of this.state.outages) if (outage.end == null) outage.end = this.state.observedUntil ?? outage.start;
     this.persist();
   }
-  persist() { this.save(this.state); }
+  persist() { this.state.online = this.online; this.save(this.state); }
   enqueue(text) { this.state.outbox.push({ text, randomId: randomBytes(8).readBigInt64LE().toString() }); }
+  enqueuePower(online, at) {
+    this.enqueue(powerMessage(online, at, this.getSchedule()));
+    Object.assign(this.state.outbox.at(-1), { power: { online, at } });
+  }
   check(now) {
-    if (!this.ready) return;
+    if (!this.ready) {
+      if (now - this.startedAt < this.timeoutMinutes * MINUTE) return;
+      // The restart gap is unknown. Only count observations by this process.
+      this.state.outages.push({ start: this.startedAt, end: null });
+      if (this.online !== false) this.enqueuePower(false, this.startedAt);
+      this.online = false;
+      this.ready = true;
+    }
     if (this.online && now - this.lastHeartbeat >= this.timeoutMinutes * MINUTE) {
       this.online = false;
       const start = this.lastHeartbeat + MINUTE;
       this.state.outages.push({ start, end: null });
-      this.enqueue(powerMessage(false, start, this.getSchedule()));
+      this.enqueuePower(false, start);
     }
     this.state.observedUntil = now;
   }
@@ -78,7 +92,7 @@ export class HeartbeatMonitor {
     if (!this.online) {
       const outage = this.state.outages.at(-1);
       if (outage?.end === null) outage.end = now;
-      this.enqueue(powerMessage(true, now, this.getSchedule()));
+      this.enqueuePower(true, now);
     }
     this.ready = true;
     this.online = true;
@@ -87,9 +101,9 @@ export class HeartbeatMonitor {
     this.persist();
   }
   tick() {
-    if (!this.ready) return;
     const now = this.now();
     this.check(now);
+    if (!this.ready) return;
     const today = local(now);
     const reportDay = today.minus({ days: 1 }).toISODate();
     if (today.hour >= 8 && this.state.reportDay !== reportDay) {
@@ -104,6 +118,13 @@ export class HeartbeatMonitor {
     try {
       while (this.state.outbox.length) {
         const item = this.state.outbox[0];
+        if (item.power && !item.prepared) {
+          await this.refreshSchedule();
+          item.text = powerMessage(item.power.online, item.power.at, this.getSchedule());
+          // Freeze the payload before sending: ambiguous failures retry the same ID and text.
+          item.prepared = true;
+          this.persist();
+        }
         await this.send(item.text, item.randomId, { silent: silentTime(this.now(), this.config) });
         this.state.outbox.shift();
         this.persist();
@@ -134,11 +155,11 @@ export function heartbeatServer({ monitor, token, log = () => {} }) {
   });
 }
 
-export async function startHeartbeat({ port, token, timeoutMinutes = 5, path, send, config, log, getSchedule }) {
+export async function startHeartbeat({ port, token, timeoutMinutes = 5, path, send, config, log, getSchedule, refreshSchedule }) {
   let state = {};
   try { state = JSON.parse(readFileSync(path, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const monitor = new HeartbeatMonitor({ state, send, config, timeoutMinutes, log, getSchedule, save(value) {
+  const monitor = new HeartbeatMonitor({ state, send, config, timeoutMinutes, log, getSchedule, refreshSchedule, save(value) {
     writeFileSync(path + '.tmp', JSON.stringify(value), { mode: 0o600 });
     renameSync(path + '.tmp', path);
   } });

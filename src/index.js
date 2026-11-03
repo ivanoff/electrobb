@@ -176,6 +176,7 @@ async function main() {
   });
   if (heartbeat && !process.argv.includes('--once')) {
     const receiver = await startHeartbeat({ ...heartbeat, path: resolve(root, 'cache/heartbeat.json'), config, log, getSchedule: () => monitor.state,
+      refreshSchedule: () => monitor.refreshForHeartbeat(),
       send: (message, random_id, { silent }) => call('messages.sendMessage', { peer: destination, message, random_id, silent }),
     });
     monitor.powerOff = () => receiver.monitor.ready && !receiver.monitor.online;
@@ -185,7 +186,7 @@ async function main() {
     try { await monitor.tick(); }
     catch (error) { await monitor.failure(error, 'tick'); }
     if (process.argv.includes('--once')) return;
-    await sleep(15_000);
+    await sleep(1_000);
   } while (true);
 }
 main().then(() => process.exit(0)).catch(error => {

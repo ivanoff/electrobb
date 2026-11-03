@@ -56,11 +56,24 @@ export class Monitor {
     this.log('operation_failed', { operation, error: message, blockedUntil: this.state.blockedUntil });
     await this.persist();
   }
-  async tick() {
+  serialize(operation) {
+    const pending = (this.operation || Promise.resolve()).then(operation);
+    this.operation = pending.catch(() => {});
+    return pending;
+  }
+  tick() { return this.serialize(() => this.runTick()); }
+  refreshForHeartbeat() {
+    return this.serialize(async () => {
+      this.state.heartbeatQueryPending = true;
+      await this.persist();
+      await this.runTick({ heartbeatOnly: true });
+    });
+  }
+  async runTick({ heartbeatOnly = false } = {}) {
     if ((this.state.blockedUntil || 0) > this.now()) {
       this.log('tick_skipped', { reason: 'telegram_flood_wait', until: this.state.blockedUntil }); return;
     }
-    if (!this.state.lastHistoryPoll || this.now() - this.state.lastHistoryPoll >= historyInterval) {
+    if (!heartbeatOnly && (!this.state.lastHistoryPoll || this.now() - this.state.lastHistoryPoll >= historyInterval)) {
       this.state.lastHistoryPoll = this.now();
       await this.persist();
       try {
@@ -75,6 +88,7 @@ export class Monitor {
     const query = queryDecision(this.state, this.now(), this.config, this.startupPending, this.powerOff());
     if (query.due) {
       this.state.lastQueryAttempt = this.now();
+      this.state.heartbeatQueryPending = false;
       await this.persist(); // Commit rate limit before the first network request, even if we crash.
       this.startupPending = false;
       this.log('query_started', query);
@@ -97,6 +111,7 @@ export class Monitor {
       } catch (error) { await this.failure(error, 'active_query'); }
     } else if (query.reasons.length) this.log('query_deferred', { ...query, reason: 'minimum_15m_or_flood_wait' });
     if ((this.state.blockedUntil || 0) > this.now()) return;
+    if (heartbeatOnly) return;
     await this.deliver();
     this.prune();
     await this.persist();

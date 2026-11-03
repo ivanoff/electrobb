@@ -177,3 +177,90 @@ test('heartbeat uses latest schedule and outage event time before timeout confir
   f.monitor.heartbeat();
   assert.equal(f.monitor.state.outbox.at(-1).text, '⚡️ Світло увімкнено о 16:03 (до 20:00).');
 });
+
+
+test('power forecast is built after awaited refresh and frozen for delivery retries', async () => {
+  const f = setup({}, '03-11-2026 14:58');
+  f.monitor.heartbeat(); await f.monitor.deliver();
+  f.sent.length = 0;
+  let schedule = scheduleOf([['03-11-2026 20:00', '03-11-2026 23:30']]);
+  f.monitor.getSchedule = () => schedule;
+  let refreshes = 0;
+  f.monitor.refreshSchedule = async () => {
+    refreshes++;
+    await Promise.resolve();
+    schedule = scheduleOf([['03-11-2026 14:44', '03-11-2026 16:00']]);
+  };
+  f.set('03-11-2026 15:03'); f.monitor.check(parseDate('03-11-2026 15:03'));
+  const attempts = [];
+  f.monitor.send = async (text, id) => { attempts.push({ text, id }); if (attempts.length === 1) throw new Error('offline'); };
+  await f.monitor.deliver();
+  assert.equal(attempts[0].text, '🪫 Світло вимкнено о 14:59 (до 16:00).');
+  schedule = {};
+  f.set('03-11-2026 15:04'); await f.monitor.deliver();
+  assert.deepEqual(attempts[0], attempts[1]);
+  assert.equal(refreshes, 1);
+});
+
+for (const previousOnline of [true, false]) {
+  for (const confirmedOnline of [true, false]) {
+    test(`restart restores ${previousOnline}, confirmation ${confirmedOnline} only announces a change`, async () => {
+      const first = setup();
+      first.monitor.heartbeat();
+      first.set('01-11-2026 12:05');
+      if (previousOnline) first.monitor.heartbeat();
+      first.monitor.tick();
+      await first.monitor.deliver();
+      assert.equal(first.saved().online, previousOnline);
+      const restarted = setup(first.saved(), '02-11-2026 12:00');
+      restarted.monitor.timeoutMinutes = 3;
+      assert.equal(restarted.monitor.online, previousOnline);
+      assert.equal(restarted.monitor.ready, false);
+      restarted.set('02-11-2026 12:02');
+      restarted.monitor.tick();
+      await restarted.monitor.deliver();
+      assert.equal(restarted.sent.length, 0);
+      if (confirmedOnline) restarted.monitor.heartbeat();
+      else {
+        restarted.set('02-11-2026 12:03');
+        restarted.monitor.tick();
+      }
+      await restarted.monitor.deliver();
+      assert.equal(restarted.monitor.ready, true);
+      assert.equal(restarted.saved().online, confirmedOnline);
+      const powerMessages = () => restarted.sent.filter(([text]) => /Світло/.test(text));
+      assert.equal(powerMessages().length, previousOnline === confirmedOnline ? 0 : 1);
+      if (previousOnline !== confirmedOnline) {
+        assert.match(powerMessages()[0][0], confirmedOnline ? /увімкнено о 12:02/ : /вимкнено о 12:00/);
+      }
+      restarted.monitor.tick();
+      await restarted.monitor.deliver();
+      assert.equal(powerMessages().length, previousOnline === confirmedOnline ? 0 : 1);
+      if (!confirmedOnline) {
+        assert.equal(restarted.monitor.state.outages.at(-1).start, parseDate('02-11-2026 12:00'));
+      }
+    });
+  }
+}
+
+test('legacy cache restores status from last observation before closing old outage', () => {
+  const observedUntil = parseDate('01-11-2026 12:00');
+  for (const online of [true, false]) {
+    const f = setup({ observedUntil, outages: online ? [] : [{ start: observedUntil - 60000, end: null }] });
+    assert.equal(f.monitor.online, online);
+    assert.equal(f.saved().online, online);
+    const again = setup(f.saved());
+    assert.equal(again.monitor.online, online);
+  }
+});
+
+test('without history startup is unknown and absence is confirmed after timeout', async () => {
+  const f = setup();
+  assert.equal(f.monitor.online, null);
+  f.set('01-11-2026 12:04'); f.monitor.tick();
+  assert.equal(f.monitor.ready, false);
+  f.set('01-11-2026 12:05'); f.monitor.tick();
+  await f.monitor.deliver();
+  assert.equal(f.saved().online, false);
+  assert.equal(f.sent.filter(([text]) => /Світло вимкнено/.test(text)).length, 1);
+});

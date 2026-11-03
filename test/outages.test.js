@@ -40,7 +40,7 @@ test('hourly schedules are planned outages with or without abbreviation', () => 
     ]);
     const result = plan(snapshot(parsed.events), '09:00');
     assert.equal(result.notifications.length, 1);
-    assert.match(result.notifications[0].text, /Планове відключення електроенергії.*10:00 до 12:00/);
+    assert.match(result.notifications[0].text, /Планове відключення.*10:00 до 12:00/);
   }
 });
 test('unknown types are reported but never used as an outage', () => {

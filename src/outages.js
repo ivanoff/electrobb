@@ -117,7 +117,7 @@ export function silentTime(now, config) {
   return start > end ? minute >= start || minute < end : minute >= start && minute < end;
 }
 export function describe(interval, now) {
-  const kind = interval.kinds.length === 2 ? 'Відключення електроенергії' : interval.kinds[0] === 'emergency' ? 'Аварійне відключення електроенергії' : 'Планове відключення електроенергії';
+  const kind = interval.kinds.length === 2 ? 'Відключення' : interval.kinds[0] === 'emergency' ? 'Аварійне відключення' : 'Планове відключення';
   const mixed = interval.kinds.length === 2 ? ' (планове та аварійне)' : '';
   const minutes = Math.ceil((interval.start - now) / MINUTE);
   const relative = minutes <= 0 ? ' триває' : minutes === 60 ? ' через 1 годину' : minutes < 60 ? ` через ${minutes} хв` : '';
