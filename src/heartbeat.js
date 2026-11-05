@@ -23,12 +23,12 @@ export function dailyReport(state, date) {
     .filter(i => i.end > i.start);
   const seconds = Math.floor(intervals.reduce((sum, i) => sum + i.end - i.start, 0) / 1000);
   if (seconds === 24 * 60 * 60) return [];
-  const duration = `${Math.floor(seconds / 3600)} год ${Math.floor(seconds % 3600 / 60)} хв ${seconds % 60} с`;
-  const lines = intervals.map(i => `${local(i.start).toFormat('HH:mm:ss')}–${i.end === end ? '24:00:00' : local(i.end).toFormat('HH:mm:ss')}`);
+  const duration = `${Math.floor(seconds / 3600)} год ${Math.floor(seconds % 3600 / 60)} хв`;
+  const lines = intervals.map(i => `- ${local(i.start).toFormat('HH:mm')}-${i.end === end ? '24:00' : local(i.end).toFormat('HH:mm')}`);
   // Split long lists to stay within Telegram's message limit.
-  const header = `Статистика за ${date.toFormat('dd.MM.yyyy')}: без світла ${duration}.\nЛише за час спостереження; невідомі періоди не враховано.`;
+  const header = `Статистика за ${date.toFormat('dd.MM.yyyy')}: без світла ${duration}.`;
   const parts = [header];
-  for (const line of lines.length ? lines : ['Зафіксованих відключень немає.']) {
+  for (const line of lines) {
     if (parts.at(-1).length + line.length > 3500) parts.push(`Продовження за ${date.toFormat('dd.MM.yyyy')}:`);
     parts[parts.length - 1] += '\n' + line;
   }
@@ -106,7 +106,7 @@ export class HeartbeatMonitor {
     if (!this.ready) return;
     const today = local(now);
     const reportDay = today.minus({ days: 1 }).toISODate();
-    if (today.hour >= 8 && this.state.reportDay !== reportDay) {
+    if (today.hour * 60 + today.minute >= 1 && this.state.reportDay !== reportDay) {
       for (const text of dailyReport(this.state, today.minus({ days: 1 }))) this.enqueue(text);
       this.state.reportDay = reportDay;
     }

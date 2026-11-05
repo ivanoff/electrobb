@@ -6,6 +6,18 @@ export const historyInterval = 10 * MINUTE;
 export const startKey = (day, i) => `${day}:start:${i.start}`;
 export const endKey = (day, i) => `${day}:end:${i.end}`;
 const intervalKey = (day, i) => `${day}:${i.start}`;
+function describeSummary(intervals, now) {
+  const groups = new Map();
+  for (const interval of intervals) {
+    const text = describe(interval, now);
+    const [, header, range] = text.match(/^(.*?:) (.*)$/);
+    if (!groups.has(header)) groups.set(header, []);
+    groups.get(header).push(range);
+  }
+  return [...groups].map(([header, ranges]) => ranges.length === 1
+    ? `${header} ${ranges[0]}`
+    : `${header}\n${ranges.map(range => `- ${range}`).join('\n')}`).join('\n');
+}
 export function newState() {
   return { version: 2, snapshot: { events: [], at: 0 }, pushes: {}, unknown: {}, unknownSent: {}, sent: {}, announced: {}, seen: {}, outbox: {} };
 }
@@ -48,7 +60,7 @@ export function planNotifications(state, now, config) {
         const previous = working.announced[intervalKey(day, i)];
         return previous && previous.end !== i.end ? [`Час завершення змінено: ${timeLabel(previous.end, now)} → ${timeLabel(i.end, now)}.`] : [];
       });
-      add('daily_summary', batch.map(i => describe(i, now)).join('\n') +
+      add('daily_summary', describeSummary(batch, now) +
         (changes.length ? '\n' + changes.join('\n') : ''), {
         morningDay: day, announced: batch.map(record), sent: batch.flatMap(startKeys),
       });

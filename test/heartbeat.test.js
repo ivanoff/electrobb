@@ -43,7 +43,7 @@ test('restart retains history but excludes unobserved time and waits for heartbe
   restarted.monitor.heartbeat(); restarted.monitor.tick(); await restarted.monitor.deliver();
   assert.equal(restarted.monitor.state.outages[0].end, parseDate('01-11-2026 12:06'));
   const report = restarted.sent.find(([text]) => text.startsWith('Статистика за 01.11.2026'));
-  assert.match(report[0], /0 год 5 хв 0 с/);
+  assert.match(report[0], /0 год 5 хв\./);
   assert.equal(report[2].silent, true);
   const count = restarted.sent.length;
   restarted.monitor.tick(); await restarted.monitor.deliver(); assert.equal(restarted.sent.length, count);
@@ -51,9 +51,27 @@ test('restart retains history but excludes unobserved time and waits for heartbe
 test('daily report clips intervals at midnight and uses actual DST day duration', () => {
   const state = { outages: [{ start: parseDate('31-10-2026 23:00'), end: parseDate('02-11-2026 01:00') }] };
   assert.deepEqual(dailyReport(state, local(parseDate('01-11-2026 12:00'))), []);
-  assert.match(dailyReport(state, local(parseDate('31-10-2026 12:00')))[0], /23:00:00–24:00:00/);
+  assert.match(dailyReport(state, local(parseDate('31-10-2026 12:00')))[0], /- 23:00-24:00/);
   const dst = { outages: [{ start: parseDate('25-10-2026 00:00'), end: parseDate('26-10-2026 00:00') }] };
   assert.match(dailyReport(dst, local(dst.outages[0].start))[0], /25 год/);
+});
+test('previous day report is sent at 00:01 Kyiv time only once, including after restart', async () => {
+  const f = setup({ reportDay: '2026-11-03', outages: [
+    { start: parseDate('04-11-2026 00:00'), end: parseDate('04-11-2026 01:36') },
+    { start: parseDate('04-11-2026 07:13'), end: parseDate('04-11-2026 08:40') },
+  ] }, '04-11-2026 23:59');
+  f.monitor.heartbeat(); await f.monitor.deliver();
+  f.sent.length = 0;
+  f.set('05-11-2026 00:00'); f.monitor.tick(); await f.monitor.deliver();
+  assert.equal(f.sent.length, 0);
+  f.set('05-11-2026 00:01'); f.monitor.tick(); await f.monitor.deliver();
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0][0], 'Статистика за 04.11.2026: без світла 3 год 3 хв.\n- 00:00-01:36\n- 07:13-08:40');
+  f.monitor.tick(); await f.monitor.deliver();
+  assert.equal(f.sent.length, 1);
+  const restarted = setup(f.saved(), '05-11-2026 00:02');
+  restarted.monitor.heartbeat(); restarted.monitor.tick(); await restarted.monitor.deliver();
+  assert.equal(restarted.sent.length, 0);
 });
 test('failed deliveries retry with same Telegram random ID', async () => {
   const f = setup(); let calls = [];
@@ -103,7 +121,7 @@ test('24-hour report is skipped and marked processed; shorter outages are report
   f.monitor.tick(); await f.monitor.deliver();
   assert.equal(f.sent.length, 0);
   const shorter = { outages: [{ start: parseDate('01-11-2026 00:00'), end: parseDate('02-11-2026 00:00') - 1000 }] };
-  assert.match(dailyReport(shorter, local(parseDate('01-11-2026 12:00')))[0], /23 год 59 хв 59 с/);
+  assert.match(dailyReport(shorter, local(parseDate('01-11-2026 12:00')))[0], /23 год 59 хв\./);
 });
 
 test('configured heartbeat timeout controls confirmation boundary', () => {
